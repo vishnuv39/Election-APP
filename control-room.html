@@ -1730,8 +1730,15 @@ function applyStatePollToConstituencies(options={}){
   const remaining={ALLIANCE:Math.max(0,target.ALLIANCE-manual.ALLIANCE),YSRCP:Math.max(0,target.YSRCP-manual.YSRCP),OTHER:Math.max(0,target.OTHER-manual.OTHER)};
   const desired={...remaining};
   const assigned={ALLIANCE:0,YSRCP:0,OTHER:0};
-  // Seats with fewer possible blocs are allocated first; flexible seats absorb the balance.
-  automatic.sort((a,b)=>a.options.length-b.options.length || a.seat.id-b.seat.id);
+  // Deterministic pseudo-random ordering spreads assignments across the full state.
+  // The seed changes when the survey seat targets change, but stays stable for repeat runs.
+  const allocationSeed = `${targets.alliance}-${targets.ysrcp}-${targets.others}`;
+  const stableHash = value => {
+    let h=2166136261;
+    for(let i=0;i<String(value).length;i++){ h^=String(value).charCodeAt(i); h=Math.imul(h,16777619); }
+    return h>>>0;
+  };
+  automatic.sort((a,b)=>stableHash(`${allocationSeed}:${a.seat.id}`)-stableHash(`${allocationSeed}:${b.seat.id}`));
   const changed={};
   automatic.forEach(({seat,options:choices})=>{
     if(!choices.length) return;
@@ -1757,7 +1764,11 @@ function applyStatePollToConstituencies(options={}){
     const group=chosen.group;
     assigned[group]++;
     remaining[groupKey(group)]=Math.max(0,remaining[groupKey(group)]-1);
-    const nextCat='COMFORT';
+    // State-poll-generated constituencies use ONLY close or narrow-edge margins.
+    // Any constituency manually configured by the operator is excluded above and
+    // therefore retains its manually selected winner and majority category.
+    const marginRoll = stableHash(`${allocationSeed}:margin:${seat.id}`)%100;
+    const nextCat = marginRoll < 50 ? 'TOOCLOSE' : 'NE';
     if(seat.meta.leader!==chosen.slot || seat.meta.cat!==nextCat || !seat.meta.statePollAuto || seat.meta.manualOverride){
       seat.meta.leader=chosen.slot;
       seat.meta.cat=nextCat;
