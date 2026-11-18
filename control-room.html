@@ -1802,6 +1802,7 @@ function renderStatePollDashboard(){
   const leader=a>y?'Alliance':y>a?'YSRCP':'Tie';
   const applied=applyStatePollToConstituencies({publish:false});
   const actual=applied?.actual;
+  const targets=getStatePollSeatTargets();
   const agencyCounts={Alliance:valid.filter(x=>Number(x.alliance)>Number(x.ysrcp)).length,YSRCP:valid.filter(x=>Number(x.ysrcp)>Number(x.alliance)).length,Tie:valid.filter(x=>Number(x.ysrcp)===Number(x.alliance)).length};
   summary.innerHTML=`<h3>Overall State Projection · Average of ${valid.length}/5 Agencies</h3>
     <div class="statepoll-avggrid">
@@ -1909,7 +1910,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   const sync=document.createElement('span'); sync.id='syncStatus'; sync.className='live-chip'; sync.textContent='● Connecting…'; document.querySelector('.roundbar')?.appendChild(sync);
   fullRerenderAll();
   attachStatePollFirebase();
-  document.getElementById('statePollAgencyGrid')?.addEventListener('click',e=>{const b=e.target.closest('[data-save-statepoll]');if(b)saveStatePollAgency(Number(b.dataset.saveStatepoll));});
+  document.getElementById('statePollAgencyGrid')?.addEventListener('click',e=>{const b=e.target.closest('[data-save-statepoll]');if(!b)return;const card=b.closest('.statepoll-agency[data-agency]');if(!card)return;const agencyIndex=Number(card.getAttribute('data-agency'));if(Number.isInteger(agencyIndex)&&agencyIndex>=0&&agencyIndex<STATE_POLL_AGENCIES.length)saveStatePollAgency(agencyIndex);});
   startRealtimeListener(data=>{ applyRemoteSnapshot(data); applyStatePollToConstituencies({publish:true}); fullRerenderAll(); setSyncStatus('● SYNCED'); });
   if(!window.ELECTION_DB){ setSyncStatus('● CONFIGURE FIREBASE',false); }
   else { window.ELECTION_DB.once('value').then(s=>{ if(!s.exists()){ hasLoadedSimulationState=true; controlPublishFull(); } else { applyRemoteSnapshot(s.val()); applyStatePollToConstituencies({publish:true}); fullRerenderAll(); } }); }
