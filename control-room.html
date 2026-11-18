@@ -661,6 +661,33 @@ const PERMANENT_CONSTITUENCY_POLLS = {
   175: { cat:'COMFORT', leader:'c1' }      // Kuppam — TDP, comfort
 };
 
+// Operator-configured constituency exit polls are stored independently of a
+// simulation, so New Simulation never clears them. Firebase is the durable source.
+let persistentConstituencyPolls = {};
+function savePersistentConstituencyPoll(id, meta){
+  const setting={cat:meta.cat,leader:meta.leader,manualOverride:true};
+  persistentConstituencyPolls[String(id)]=setting;
+  if(window.ELECTION_DB){
+    window.ELECTION_DB.child('constituencyExitPolls/'+id).set(setting)
+      .catch(err=>{ console.error('Could not save permanent constituency exit poll',id,err); setSyncStatus('● EXIT POLL SAVE ERROR',false); });
+  }
+}
+function applyPersistentConstituencyPolls(){
+  Object.entries(persistentConstituencyPolls||{}).forEach(([id,setting])=>{
+    const seat=STATE[Number(id)];
+    if(!seat?.meta || !setting?.manualOverride) return;
+    const nextCat=setting.cat||'TOOCLOSE';
+    const nextLeader=setting.leader||'random';
+    const changed=seat.meta.cat!==nextCat || seat.meta.leader!==nextLeader || seat.meta.manualOverride!==true || seat.meta.statePollAuto===true;
+    seat.meta.cat=nextCat;
+    seat.meta.leader=nextLeader;
+    seat.meta.manualOverride=true;
+    seat.meta.statePollAuto=false;
+    delete seat.meta.statePollAutoGroup;
+    if(changed) regenerateRow(Number(id));
+  });
+}
+
 function enforcePermanentConstituencyPolls(persist=true){
   const patch={};
   Object.entries(PERMANENT_CONSTITUENCY_POLLS).forEach(([id,setting])=>{
@@ -706,6 +733,7 @@ initState();
 function newSimulation(){
   simVersion += 1;
   initState();
+  applyPersistentConstituencyPolls();
   if(typeof applyStatePollToConstituencies==='function') applyStatePollToConstituencies({publish:false});
   fullRerenderAll();
 }
@@ -1768,7 +1796,7 @@ function applyStatePollToConstituencies(options={}){
     // Any constituency manually configured by the operator is excluded above and
     // therefore retains its manually selected winner and majority category.
     const marginRoll = stableHash(`${allocationSeed}:margin:${seat.id}`)%100;
-    const nextCat = marginRoll < 50 ? 'TOOCLOSE' : 'NE';
+    const nextCat = 'TOOCLOSE'; // Default automatic margin: every state-poll-generated seat is Too Close.
     if(seat.meta.leader!==chosen.slot || seat.meta.cat!==nextCat || !seat.meta.statePollAuto || seat.meta.manualOverride){
       seat.meta.leader=chosen.slot;
       seat.meta.cat=nextCat;
@@ -1866,6 +1894,7 @@ function serializableState(){
 }
 function applyRemoteSnapshot(data){
   if(!data || !data.state) return;
+  persistentConstituencyPolls = data.constituencyExitPolls || persistentConstituencyPolls || {};
   STATE = data.state || {};
   Object.values(STATE).forEach(seat=>{
     if(!seat?.meta) return;
@@ -1880,6 +1909,7 @@ function applyRemoteSnapshot(data){
   currentRound = Number(data.currentRound||0);
   maxRounds = Number(data.maxRounds||Math.max(1,...Object.values(STATE).map(s=>s.result?.totalRounds||1)));
   eventLog = Array.isArray(data.eventLog)?data.eventLog:[];
+  applyPersistentConstituencyPolls();
   enforcePermanentConstituencyPolls(true);
 }
 function ensureFirebase(){
@@ -1948,7 +1978,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   document.getElementById('vipPhotoFileInput')?.addEventListener('change',e=>{ const f=e.target.files?.[0]; if(f&&pendingPhotoTarget){ applyVipPhoto(pendingPhotoTarget.id,pendingPhotoTarget.cand,f); const id=pendingPhotoTarget.id,c=pendingPhotoTarget.cand; setTimeout(()=>controlPublishPatch({['state/'+id+'/'+(c==='c1'?'photoC1':'photoC2')]:STATE[id][c==='c1'?'photoC1':'photoC2']}),50); } e.target.value=''; });
   document.addEventListener('paste',e=>{ const active=document.activeElement; if(!active?.classList?.contains('photo-btn')) return; const items=e.clipboardData?.items||[]; for(const item of items){ if(item.type.startsWith('image/')){ const f=item.getAsFile(); if(f){ applyVipPhoto(+active.dataset.id,active.dataset.cand,f); const id=+active.dataset.id,c=active.dataset.cand; setTimeout(()=>controlPublishPatch({['state/'+id+'/'+(c==='c1'?'photoC1':'photoC2')]:STATE[id][c==='c1'?'photoC1':'photoC2']}),50); e.preventDefault(); } break; } } });
-  document.getElementById('pollTbody')?.addEventListener('change',e=>{ const t=e.target,id=+t.dataset.id; if(!id||anyCountingStarted()) return; const field=t.dataset.field,s=STATE[id]; if(!field) return; s.meta[field]=t.value; s.meta.manualOverride=true; s.meta.statePollAuto=false; delete s.meta.statePollAutoGroup; if(field==='cat'){ if(s.meta.cat==='TOOCLOSE') s.meta.leader='random'; else if(s.meta.leader==='random') s.meta.leader='c1'; } regenerateRow(id); renderPollTable(); renderDashboard(); renderCountList(); controlPublishPatch({['state/'+id]:s}); });
+  document.getElementById('pollTbody')?.addEventListener('change',e=>{ const t=e.target,id=+t.dataset.id; if(!id||anyCountingStarted()) return; const field=t.dataset.field,s=STATE[id]; if(!field) return; s.meta[field]=t.value; s.meta.manualOverride=true; s.meta.statePollAuto=false; delete s.meta.statePollAutoGroup; if(field==='cat'){ if(s.meta.cat==='TOOCLOSE') s.meta.leader='random'; else if(s.meta.leader==='random') s.meta.leader='c1'; } regenerateRow(id); savePersistentConstituencyPoll(id,s.meta); renderPollTable(); renderDashboard(); renderCountList(); controlPublishPatch({['state/'+id]:s}); });
   document.getElementById('countSearch')?.addEventListener('input',e=>{countFilterText=e.target.value;renderCountList();});
   document.getElementById('countFilters')?.addEventListener('click',e=>{const b=e.target.closest('.pill');if(!b)return;document.querySelectorAll('#countFilters .pill').forEach(p=>p.classList.remove('active'));b.classList.add('active');countFilterMode=b.dataset.f;renderCountList();});
   document.getElementById('consList')?.addEventListener('click',e=>{ const seat=e.target.closest('.seat-advance'); if(seat&&!seat.disabled){const id=+seat.dataset.seatId,steps=+seat.dataset.seatSteps; if(advanceSeat(id,steps)){STATE[id].viewingRound=revealedFor(STATE[id]);fullRerenderAll();controlPublishPatch({['state/'+id+'/revealed']:STATE[id].revealed,eventLog});}return;} const rb=e.target.closest('.round-btn');if(rb&&!rb.disabled){STATE[+rb.dataset.roundId].viewingRound=+rb.dataset.roundN;refreshExpandedCardOnly();return;} const h=e.target.closest('[data-toggle]');if(h){const id=+h.dataset.toggle;expandedId=expandedId===id?null:id;if(expandedId!=null)STATE[id].viewingRound=revealedFor(STATE[id]);renderCountList();}});
